@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../models/models.dart';
+import 'alarm_state.dart';
 
 /// Builds and shows alarm notifications. Used by the app and by the
 /// background service, which runs in a separate isolate.
@@ -44,6 +45,80 @@ class AlarmNotifier {
 
   static bool isCritical(AlertInstance a) => a.isCritical;
 
+  /// One notification stands for all critical alerts, so several of them never
+  /// pile up as separate alarms. It is updated in place as alerts come and go.
+  static const criticalId = 9001;
+
+  /// Marks the notification that opens the alarm page. The native side turns
+  /// the screen on and shows the app over the lock screen for it.
+  static const alarmPayload = 'grafmod_alarm';
+
+  /// Sounds (or, with [quiet], silently refreshes) the critical alarm for
+  /// every alert in [snap]. The sound and the full-screen page keep going
+  /// until the alarm is dismissed.
+  Future<void> showCritical(AlarmSnapshot snap, {bool quiet = false}) async {
+    try {
+      await init();
+      final items = snap.items;
+      if (items.isEmpty) return;
+      final n = items.length;
+      final title =
+          n == 1 ? 'CRITICAL: ${items.first.name}' : '$n CRITICAL ALERTS';
+      String line(AlarmItem i) => (i.summary ?? '').isEmpty
+          ? i.name
+          : '${i.name}: ${i.summary}';
+      final body = n == 1
+          ? (items.first.summary ?? 'A critical alert is firing in Grafana.')
+          : items.map((i) => i.name).join(', ');
+      final shown = items.take(6).toList();
+      final details = AndroidNotificationDetails(
+        'grafmod_critical',
+        'Critical alarms',
+        channelDescription: 'Loud alarm for critical Grafana alerts.',
+        importance: Importance.max,
+        priority: Priority.max,
+        category: AndroidNotificationCategory.alarm,
+        audioAttributesUsage: AudioAttributesUsage.alarm,
+        playSound: true,
+        enableVibration: true,
+        vibrationPattern: Int64List.fromList([0, 800, 400, 800, 400, 800]),
+        fullScreenIntent: true,
+        visibility: NotificationVisibility.public,
+        ongoing: true,
+        autoCancel: false,
+        onlyAlertOnce: quiet,
+        styleInformation: InboxStyleInformation(
+          shown.map(line).toList(),
+          contentTitle: title,
+          summaryText: n > shown.length ? '+${n - shown.length} more' : null,
+        ),
+        // 4 = FLAG_INSISTENT: keep sounding until the alarm is dismissed.
+        additionalFlags: Int32List.fromList([4]),
+      );
+      await _plugin.show(
+        criticalId,
+        title,
+        body,
+        NotificationDetails(
+          android: details,
+          iOS: const DarwinNotificationDetails(
+            presentAlert: true,
+            presentBadge: true,
+            presentSound: true,
+          ),
+        ),
+        payload: alarmPayload,
+      );
+    } catch (_) {}
+  }
+
+  /// Stops the critical alarm sound and removes its notification.
+  Future<void> clearCritical() async {
+    try {
+      await _plugin.cancel(criticalId);
+    } catch (_) {}
+  }
+
   /// Makes sure the loud channel exists with alarm sound and vibration. The
   /// app normally creates it with a Do Not Disturb override; if that has not
   /// happened yet (for example the service started first) this is the backup.
@@ -73,7 +148,7 @@ class AlarmNotifier {
     if (_ready) return;
     await _plugin.initialize(
       const InitializationSettings(
-        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+        android: AndroidInitializationSettings('@drawable/ic_stat_grafmod'),
         iOS: DarwinInitializationSettings(
           requestAlertPermission: false,
           requestBadgePermission: false,
@@ -106,8 +181,8 @@ class AlarmNotifier {
   Future<void> alert(AlertInstance a) {
     final sev = (a.severity ?? '').trim();
     final title = sev.isEmpty ? a.name : '${sev.toUpperCase()}: ${a.name}';
-    return show(title, a.summary ?? 'An alert is firing in Grafana.',
-        critical: isCritical(a));
+    // Critical alerts are handled by [showCritical] so they share one alarm.
+    return show(title, a.summary ?? 'An alert is firing in Grafana.');
   }
 
   Future<void> show(String title, String body, {bool critical = false}) async {
@@ -136,11 +211,7 @@ class AlarmNotifier {
 class FiringTracker {
   Set<String>? _known; // null until the first check sets the baseline
 
-  static String keyOf(AlertInstance a) {
-    final entries = a.labels.entries.toList()
-      ..sort((x, y) => x.key.compareTo(y.key));
-    return entries.map((e) => '${e.key}=${e.value}').join(',');
-  }
+  static String keyOf(AlertInstance a) => alertKey(a);
 
   /// Returns the alerts in [firing] that were not firing at the last check.
   /// The first call only records the baseline and returns nothing.

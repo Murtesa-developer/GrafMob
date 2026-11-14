@@ -52,7 +52,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _autoStartWatch() async {
     final api = widget.auth.api;
     if (api == null || !widget.auth.watchWanted) return;
-    await widget.watcher.start(api);
+    await widget.watcher.start(api, seconds: widget.auth.watchSeconds);
   }
 
   void _openAlerts() {
@@ -117,20 +117,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
+        // Icons only: cleaner, and the tooltips still name each tab.
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysHide,
         onDestinationSelected: (i) => setState(() => _index = i),
         destinations: const [
           NavigationDestination(
               icon: Icon(Icons.space_dashboard_outlined),
               selectedIcon: Icon(Icons.space_dashboard_rounded),
-              label: 'Dashboards'),
+              label: 'Dashboards',
+              tooltip: 'Dashboards'),
           NavigationDestination(
               icon: Icon(Icons.notifications_none_rounded),
               selectedIcon: Icon(Icons.notifications_rounded),
-              label: 'Alerts'),
+              label: 'Alerts',
+              tooltip: 'Alerts'),
           NavigationDestination(
               icon: Icon(Icons.account_circle_outlined),
               selectedIcon: Icon(Icons.account_circle_rounded),
-              label: 'Account'),
+              label: 'Account',
+              tooltip: 'Account'),
         ],
       ),
     );

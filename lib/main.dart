@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import 'core/alarm_state.dart';
 import 'core/alert_watcher.dart';
 import 'core/background_watch.dart';
+import 'screens/alarm_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'state/auth_controller.dart';
@@ -45,6 +47,30 @@ class _GrafModAppState extends State<GrafModApp> {
       theme: buildTheme(Brightness.light),
       darkTheme: buildTheme(Brightness.dark),
       themeMode: ThemeMode.system,
+      // The alarm page sits above everything, whatever screen is open, and
+      // updates live as critical alerts come and go.
+      builder: (context, child) => Stack(
+        fit: StackFit.expand,
+        children: [
+          if (child != null) child,
+          ListenableBuilder(
+            listenable: Listenable.merge([_watcher.alarm, _watcher.pageOpen]),
+            builder: (context, _) {
+              final snap = _watcher.alarm.value;
+              if (!_watcher.pageOpen.value || snap.items.isEmpty) {
+                return const SizedBox.shrink();
+              }
+              return AlarmScreen(
+                snapshot: snap,
+                onAcknowledge: _watcher.acknowledgeAlarm,
+                onSnooze: _watcher.snoozeAlarm,
+                onDismiss: _watcher.dismissAlarm,
+                onOpenApp: _watcher.openAppFromAlarm,
+              );
+            },
+          ),
+        ],
+      ),
       home: ListenableBuilder(
         listenable: _auth,
         builder: (context, _) {

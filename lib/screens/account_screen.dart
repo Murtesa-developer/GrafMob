@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/alarm_state.dart';
 import '../models/models.dart';
 import '../core/alert_watcher.dart';
 import '../core/system_access.dart';
@@ -20,6 +21,7 @@ class AccountScreen extends StatefulWidget {
 class _AccountScreenState extends State<AccountScreen>
     with WidgetsBindingObserver {
   SystemStatus _sys = const SystemStatus();
+  int? _dragSecs; // slider value while the finger is down
 
   @override
   void initState() {
@@ -104,6 +106,46 @@ class _AccountScreenState extends State<AccountScreen>
       trailing: ok
           ? const Icon(Icons.check_circle_rounded, color: Pal.green)
           : TextButton(onPressed: onFix, child: const Text('Allow')),
+    );
+  }
+
+  Widget _intervalRow(BuildContext context) {
+    final p = Pal.of(context);
+    final secs = _dragSecs ?? auth.watchSeconds;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.timer_outlined, color: p.muted),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Text('Check every', style: TextStyle(color: p.text)),
+            ),
+            Text(formatWatchSeconds(secs),
+                style: const TextStyle(
+                    color: Pal.accent, fontWeight: FontWeight.w700)),
+          ],
+        ),
+        Slider(
+          min: minWatchSeconds.toDouble(),
+          max: maxWatchSeconds.toDouble(),
+          divisions: (maxWatchSeconds - minWatchSeconds) ~/ watchStepSeconds,
+          value: secs.toDouble(),
+          label: formatWatchSeconds(secs),
+          onChanged: (v) => setState(() => _dragSecs = v.round()),
+          onChangeEnd: (v) async {
+            final s = v.round();
+            await auth.setWatchSeconds(s);
+            watcher.setIntervalSeconds(s);
+            if (mounted) setState(() => _dragSecs = null);
+          },
+        ),
+        Text(
+            'Shorter times find problems sooner but use more battery. '
+            'Works while the app is closed too.',
+            style: TextStyle(color: p.muted, fontSize: 12.5, height: 1.35)),
+      ],
     );
   }
 
@@ -287,16 +329,18 @@ class _AccountScreenState extends State<AccountScreen>
                         style: TextStyle(color: p.text)),
                     subtitle: Text(
                         watcher.inBackground
-                            ? 'GrafMod checks Grafana every 20 seconds and '
+                            ? 'GrafMod checks Grafana every ${formatWatchSeconds(auth.watchSeconds)} and '
                                 'sounds an alarm when an alert starts firing, '
                                 'even when the app is closed. A small '
                                 'notification stays visible while it runs.'
-                            : 'GrafMod checks Grafana every 20 seconds and '
+                            : 'GrafMod checks Grafana every ${formatWatchSeconds(auth.watchSeconds)} and '
                                 'sounds an alarm when an alert starts firing. '
                                 'Works while the app is running.',
                         style: TextStyle(color: p.muted)),
                     secondary: Icon(Icons.campaign_rounded, color: p.muted),
                   ),
+                  const SizedBox(height: 4),
+                  _intervalRow(context),
                   if (on && watcher.lastCheck != null) ...[
                     Divider(color: p.outline),
                     ListTile(

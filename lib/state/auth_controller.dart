@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../core/alarm_state.dart';
 import '../core/grafana_api.dart';
 import '../models/models.dart';
 
@@ -12,6 +13,7 @@ class AuthController extends ChangeNotifier {
   static const _kUser = 'grafana_user';
   static const _kPass = 'grafana_pass';
   static const _kWatch = 'watch_alerts';
+  static const _kInterval = 'watch_interval';
   static const _kInsecure = 'allow_insecure';
 
   // Credentials live in the Android Keystore / iOS Keychain, are readable only
@@ -33,6 +35,9 @@ class AuthController extends ChangeNotifier {
   /// Whether the app should watch alerts and sound alarms (on by default).
   bool watchWanted = true;
 
+  /// Seconds between two checks of Grafana (10 s up to 2 min).
+  int watchSeconds = defaultWatchSeconds;
+
   /// True only when the user explicitly allowed plain http:// servers.
   bool allowInsecure = false;
 
@@ -42,6 +47,9 @@ class AuthController extends ChangeNotifier {
       final u = await _storage.read(key: _kUser);
       final p = await _storage.read(key: _kPass);
       watchWanted = (await _storage.read(key: _kWatch)) != 'false';
+      watchSeconds = clampWatchSeconds(
+          int.tryParse(await _storage.read(key: _kInterval) ?? '') ??
+              defaultWatchSeconds);
       allowInsecure = (await _storage.read(key: _kInsecure)) == 'true';
       savedUrl = url;
       savedUser = u;
@@ -106,6 +114,14 @@ class AuthController extends ChangeNotifier {
     watchWanted = on;
     try {
       await _storage.write(key: _kWatch, value: on ? 'true' : 'false');
+    } catch (_) {}
+    notifyListeners();
+  }
+
+  Future<void> setWatchSeconds(int seconds) async {
+    watchSeconds = clampWatchSeconds(seconds);
+    try {
+      await _storage.write(key: _kInterval, value: '$watchSeconds');
     } catch (_) {}
     notifyListeners();
   }

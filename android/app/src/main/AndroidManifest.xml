@@ -39,6 +39,10 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- Rings the alarm again when a snooze ends, even while the phone sleeps. -->
+        <receiver
+            android:name=".SnoozeReceiver"
+            android:exported="false" />
         <!-- Keeps checking Grafana for firing alerts while the app is closed. -->
         <service
             android:name="id.flutter.flutter_background_service.BackgroundService"
