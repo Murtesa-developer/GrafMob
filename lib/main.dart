@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
 
-import 'core/push_service.dart';
+import 'core/alert_watcher.dart';
+import 'core/background_watch.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'state/auth_controller.dart';
 import 'theme.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await BackgroundWatch.configure();
   runApp(const GrafModApp());
 }
 
@@ -20,19 +22,18 @@ class GrafModApp extends StatefulWidget {
 
 class _GrafModAppState extends State<GrafModApp> {
   final _auth = AuthController();
-  final _push = PushService();
+  final _watcher = AlertWatcher();
 
   @override
   void initState() {
     super.initState();
-    _push.init();
     _auth.restore();
   }
 
   @override
   void dispose() {
     _auth.dispose();
-    _push.dispose();
+    _watcher.dispose();
     super.dispose();
   }
 
@@ -55,7 +56,7 @@ class _GrafModAppState extends State<GrafModApp> {
             case AuthStatus.loggedOut:
               return LoginScreen(auth: _auth);
             case AuthStatus.loggedIn:
-              return HomeScreen(auth: _auth, push: _push);
+              return HomeScreen(auth: _auth, watcher: _watcher);
           }
         },
       ),

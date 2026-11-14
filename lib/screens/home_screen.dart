@@ -1,9 +1,9 @@
 import 'dart:async';
 
-import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 
-import '../core/push_service.dart';
+import '../core/alert_watcher.dart';
+import '../models/models.dart';
 import '../state/auth_controller.dart';
 import '../theme.dart';
 import 'account_screen.dart';
@@ -11,48 +11,56 @@ import 'alerts_screen.dart';
 import 'dashboards_screen.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, required this.auth, required this.push});
+  const HomeScreen({super.key, required this.auth, required this.watcher});
   final AuthController auth;
-  final PushService push;
+  final AlertWatcher watcher;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _index = 0;
-  StreamSubscription<RemoteMessage>? _fgSub;
+  StreamSubscription<AlertInstance>? _fgSub;
 
   @override
   void initState() {
     super.initState();
-    _fgSub = widget.push.foreground.listen(_onForeground);
-    widget.push.openAlerts.addListener(_openAlerts);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _autoEnablePush());
+    WidgetsBinding.instance.addObserver(this);
+    _fgSub = widget.watcher.fired.listen(_onFired);
+    widget.watcher.openAlerts.addListener(_openAlerts);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _autoStartWatch());
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _fgSub?.cancel();
-    widget.push.openAlerts.removeListener(_openAlerts);
+    widget.watcher.openAlerts.removeListener(_openAlerts);
+    widget.watcher.stop(notify: false);
     super.dispose();
   }
 
-  Future<void> _autoEnablePush() async {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed &&
+        widget.watcher.state == WatchState.on) {
+      widget.watcher.checkNow();
+    }
+  }
+
+  Future<void> _autoStartWatch() async {
     final api = widget.auth.api;
-    final url = widget.auth.backendUrl;
-    if (api == null || url == null || !widget.auth.pushWanted) return;
-    await widget.push.enable(api, url);
+    if (api == null || !widget.auth.watchWanted) return;
+    await widget.watcher.start(api);
   }
 
   void _openAlerts() {
     if (mounted) setState(() => _index = 1);
   }
 
-  void _onForeground(RemoteMessage m) {
-    widget.push.alertTick.value++;
-    final n = m.notification;
-    if (!mounted || n == null) return;
+  void _onFired(AlertInstance a) {
+    if (!mounted) return;
     final p = Pal.of(context);
     final messenger = ScaffoldMessenger.of(context);
     messenger.hideCurrentSnackBar();
@@ -69,11 +77,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(n.title ?? 'Alert',
+                  Text(a.name,
                       style: TextStyle(
                           color: p.text, fontWeight: FontWeight.w700)),
-                  if ((n.body ?? '').isNotEmpty)
-                    Text(n.body!,
+                  if ((a.summary ?? '').isNotEmpty)
+                    Text(a.summary!,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(color: p.muted)),
@@ -98,8 +106,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final pages = <Widget>[
       DashboardsScreen(api: api),
-      AlertsScreen(api: api, refreshOn: widget.push.alertTick),
-      AccountScreen(auth: widget.auth, push: widget.push),
+      AlertsScreen(api: api, refreshOn: widget.watcher.alertTick),
+      AccountScreen(auth: widget.auth, watcher: widget.watcher),
     ];
 
     return Scaffold(

@@ -53,7 +53,31 @@ class AlertInstance {
   final String generatorUrl;
 
   String get name => labels['alertname'] ?? 'Alert';
-  String? get severity => labels['severity'];
+  /// Severity label. Some setups use another label name for it.
+  String? get severity =>
+      labels['severity'] ??
+      labels['Severity'] ??
+      labels['priority'] ??
+      labels['level'] ??
+      labels['urgency'];
+
+  /// True for critical alerts, which get the loud alarm.
+  bool get isCritical {
+    final v = (severity ?? '').toLowerCase().trim();
+    if (v.contains('crit')) return true;
+    const names = {
+      'page',
+      'p0',
+      'p1',
+      'sev0',
+      'sev1',
+      'emergency',
+      'fatal',
+      'disaster',
+      'urgent',
+    };
+    return names.contains(v);
+  }
   String? get summary => annotations['summary'] ?? annotations['description'];
 
   factory AlertInstance.fromJson(Map<String, dynamic> j) => AlertInstance(

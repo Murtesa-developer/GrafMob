@@ -11,8 +11,7 @@ class AuthController extends ChangeNotifier {
   static const _kUrl = 'grafana_url';
   static const _kUser = 'grafana_user';
   static const _kPass = 'grafana_pass';
-  static const _kPushUrl = 'push_backend_url';
-  static const _kPushOn = 'push_wanted';
+  static const _kWatch = 'watch_alerts';
   static const _kInsecure = 'allow_insecure';
 
   // Credentials live in the Android Keystore / iOS Keychain, are readable only
@@ -31,9 +30,8 @@ class AuthController extends ChangeNotifier {
   String? savedUrl;
   String? savedUser;
 
-  /// Notification backend URL and whether push should be active.
-  String? backendUrl;
-  bool pushWanted = false;
+  /// Whether the app should watch alerts and sound alarms (on by default).
+  bool watchWanted = true;
 
   /// True only when the user explicitly allowed plain http:// servers.
   bool allowInsecure = false;
@@ -43,8 +41,7 @@ class AuthController extends ChangeNotifier {
       final url = await _storage.read(key: _kUrl);
       final u = await _storage.read(key: _kUser);
       final p = await _storage.read(key: _kPass);
-      backendUrl = await _storage.read(key: _kPushUrl);
-      pushWanted = (await _storage.read(key: _kPushOn)) == 'true';
+      watchWanted = (await _storage.read(key: _kWatch)) != 'false';
       allowInsecure = (await _storage.read(key: _kInsecure)) == 'true';
       savedUrl = url;
       savedUser = u;
@@ -76,19 +73,10 @@ class AuthController extends ChangeNotifier {
     String url,
     String username,
     String password, {
-    String? pushUrl,
     bool allowInsecure = false,
   }) async {
     final problem = GrafanaApi.checkUrl(url, allowInsecure: allowInsecure);
     if (problem != null) throw GrafanaException(problem);
-    final pushText = (pushUrl ?? '').trim();
-    if (pushText.isNotEmpty) {
-      final pushProblem =
-          GrafanaApi.checkUrl(pushText, allowInsecure: allowInsecure);
-      if (pushProblem != null) {
-        throw GrafanaException('Notification server: $pushProblem');
-      }
-    }
     final candidate =
         GrafanaApi(baseUrl: url, username: username, password: password);
     try {
@@ -102,15 +90,11 @@ class AuthController extends ChangeNotifier {
     savedUrl = candidate.baseUrl;
     savedUser = username;
     this.allowInsecure = allowInsecure;
-    final push = (pushUrl ?? '').trim();
-    backendUrl = push.isEmpty ? null : GrafanaApi.normalizeUrl(push);
-    pushWanted = backendUrl != null;
     try {
       await _storage.write(key: _kUrl, value: candidate.baseUrl);
       await _storage.write(key: _kUser, value: username);
       await _storage.write(key: _kPass, value: password);
       await _storage.write(key: _kInsecure, value: allowInsecure ? 'true' : 'false');
-      await _writePush();
     } catch (_) {
       // Storage failure should not block use of the app this session.
     }
@@ -118,34 +102,20 @@ class AuthController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> setPush(String? url, bool on) async {
-    backendUrl = (url == null || url.trim().isEmpty)
-        ? null
-        : GrafanaApi.normalizeUrl(url);
-    pushWanted = on && backendUrl != null;
+  Future<void> setWatch(bool on) async {
+    watchWanted = on;
     try {
-      await _writePush();
+      await _storage.write(key: _kWatch, value: on ? 'true' : 'false');
     } catch (_) {}
     notifyListeners();
-  }
-
-  Future<void> _writePush() async {
-    if (backendUrl == null) {
-      await _storage.delete(key: _kPushUrl);
-    } else {
-      await _storage.write(key: _kPushUrl, value: backendUrl);
-    }
-    await _storage.write(key: _kPushOn, value: pushWanted ? 'true' : 'false');
   }
 
   Future<void> logout() async {
     api?.close();
     api = null;
     user = null;
-    pushWanted = false;
     try {
       await _storage.delete(key: _kPass);
-      await _storage.write(key: _kPushOn, value: 'false');
     } catch (_) {}
     try {
       // Drop the Grafana web session held by the dashboard WebView.

@@ -11,6 +11,10 @@ Color _severityColor(String? s) {
     case 'critical':
     case 'page':
       return Pal.red;
+    case 'p0':
+    case 'p1':
+    case 'emergency':
+      return Pal.red;
     case 'warning':
     case 'warn':
       return Pal.amber;
@@ -107,16 +111,14 @@ class _ActiveTab extends StatelessWidget {
     return AsyncList<AlertInstance>(
       load: api.alerts,
       refreshOn: refreshOn,
-      autoRefresh: const Duration(seconds: 30),
+      autoRefresh: const Duration(seconds: 20),
       emptyIcon: Icons.verified_rounded,
       emptyColor: Pal.green,
       emptyTitle: 'All clear',
       emptyMessage: 'No alerts are firing right now.',
       builder: (context, items) {
         final active = items.where((a) => a.state == 'active').length;
-        final critical = items
-            .where((a) => (a.severity ?? '').toLowerCase() == 'critical')
-            .length;
+        final critical = items.where((a) => a.isCritical).length;
         final suppressed = items.where((a) => a.state != 'active').length;
         return ListView(
           physics: const AlwaysScrollableScrollPhysics(),

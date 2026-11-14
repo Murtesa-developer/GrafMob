@@ -120,23 +120,104 @@ class GrafanaApi {
         .toList();
   }
 
-  /// Active alert instances from Grafana's built-in Alertmanager.
+  /// Firing alert instances. Grafana's built-in Alertmanager only knows about
+  /// alerts it received, so alerts that are firing according to the rules
+  /// (for example when alerts go to an external Alertmanager) are added too.
   Future<List<AlertInstance>> alerts() async {
-    final json = await _get('/api/alertmanager/grafana/api/v2/alerts');
-    final list = (json as List)
-        .map((e) => AlertInstance.fromJson(e as Map<String, dynamic>))
-        .toList();
-    list.sort((a, b) => b.startsAt.compareTo(a.startsAt));
-    return list;
+    final out = <AlertInstance>[];
+    Object? amError;
+    try {
+      final json = await _get('/api/alertmanager/grafana/api/v2/alerts');
+      out.addAll((json as List)
+          .map((e) => AlertInstance.fromJson(e as Map<String, dynamic>)));
+    } on GrafanaAuthException {
+      rethrow;
+    } catch (e) {
+      amError = e;
+    }
+
+    try {
+      final groups = await _ruleGroups();
+      for (final g in groups) {
+        for (final r in (g['rules'] as List? ?? const [])) {
+          final rule = r as Map<String, dynamic>;
+          final ruleName = (rule['name'] ?? 'Alert').toString();
+          final ruleLabels = _strMap(rule['labels']);
+          final ruleNotes = _strMap(rule['annotations']);
+          for (final a in (rule['alerts'] as List? ?? const [])) {
+            final alert = a as Map<String, dynamic>;
+            final st = (alert['state'] ?? '').toString().toLowerCase();
+            if (st.isEmpty ||
+                st == 'normal' ||
+                st == 'pending' ||
+                st == 'inactive') {
+              continue;
+            }
+            final labels = {
+              ...ruleLabels,
+              ..._strMap(alert['labels']),
+            };
+            labels.putIfAbsent('alertname', () => ruleName);
+            final item = AlertInstance(
+              labels: labels,
+              annotations: {...ruleNotes, ..._strMap(alert['annotations'])},
+              startsAt: DateTime.tryParse(
+                          (alert['activeAt'] ?? '').toString())
+                      ?.toLocal() ??
+                  DateTime.now(),
+              state: 'active',
+              receivers: const [],
+              generatorUrl: '',
+            );
+            if (!_alreadyListed(out, item)) out.add(item);
+          }
+        }
+      }
+    } catch (e) {
+      if (amError != null) throw amError;
+    }
+
+    out.sort((a, b) => b.startsAt.compareTo(a.startsAt));
+    return out;
+  }
+
+  /// True when [item] is already in [list] (same alert name and every label
+  /// of [item] matches).
+  static bool _alreadyListed(List<AlertInstance> list, AlertInstance item) {
+    for (final e in list) {
+      if (e.name != item.name) continue;
+      var same = true;
+      for (final kv in item.labels.entries) {
+        if (kv.key.startsWith('__')) continue;
+        if (e.labels.containsKey(kv.key) && e.labels[kv.key] != kv.value) {
+          same = false;
+          break;
+        }
+      }
+      if (same) return true;
+    }
+    return false;
+  }
+
+  Future<List<Map<String, dynamic>>> _ruleGroups() async {
+    final json = await _get('/api/prometheus/grafana/api/v1/rules');
+    final groups = ((json as Map)['data']?['groups'] as List?) ?? const [];
+    return groups.map((g) {
+      final m = Map<String, dynamic>.from(g as Map);
+      return m;
+    }).toList();
+  }
+
+  static Map<String, String> _strMap(dynamic m) {
+    if (m is! Map) return {};
+    return m.map((k, v) => MapEntry('$k', '$v'));
   }
 
   /// Grafana-managed alert rules with their current state.
   Future<List<AlertRule>> rules() async {
-    final json = await _get('/api/prometheus/grafana/api/v1/rules');
-    final groups = ((json as Map)['data']?['groups'] as List?) ?? const [];
+    final groups = await _ruleGroups();
     final out = <AlertRule>[];
-    for (final g in groups) {
-      final group = g as Map<String, dynamic>;
+    for (final group in groups) {
       final folder = (group['file'] ?? '').toString();
       for (final r in (group['rules'] as List? ?? const [])) {
         out.add(AlertRule.fromJson(r as Map<String, dynamic>, folder));

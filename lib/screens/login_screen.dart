@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../state/auth_controller.dart';
+import 'terms_screen.dart';
 import '../theme.dart';
 import '../widgets/ui.dart';
 
@@ -16,7 +17,6 @@ class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   late final _url = TextEditingController(text: widget.auth.savedUrl ?? '');
   late final _user = TextEditingController(text: widget.auth.savedUser ?? '');
-  late final _push = TextEditingController(text: widget.auth.backendUrl ?? '');
   final _pass = TextEditingController();
   bool _busy = false;
   bool _obscure = true;
@@ -27,7 +27,6 @@ class _LoginScreenState extends State<LoginScreen> {
   void dispose() {
     _url.dispose();
     _user.dispose();
-    _push.dispose();
     _pass.dispose();
     super.dispose();
   }
@@ -43,7 +42,6 @@ class _LoginScreenState extends State<LoginScreen> {
         _url.text,
         _user.text.trim(),
         _pass.text,
-        pushUrl: _push.text,
         allowInsecure: _allowInsecure,
       );
     } catch (e) {
@@ -84,14 +82,14 @@ class _LoginScreenState extends State<LoginScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Text('GrafMod',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                                color: p.text,
-                                fontSize: 30,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: -0.8)),
-                        const SizedBox(height: 6),
+                        Center(
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(32),
+                            child: Image.asset('assets/images/logo.png',
+                                width: 150, height: 150),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
                         Text('Sign in to your Grafana server',
                             textAlign: TextAlign.center,
                             style: TextStyle(color: p.muted, fontSize: 15)),
@@ -145,7 +143,8 @@ class _LoginScreenState extends State<LoginScreen> {
                               TextFormField(
                                 controller: _pass,
                                 obscureText: _obscure,
-                                textInputAction: TextInputAction.next,
+                                textInputAction: TextInputAction.done,
+                                onFieldSubmitted: (_) => _submit(),
                                 decoration: InputDecoration(
                                   labelText: 'Password',
                                   prefixIcon: const Icon(Icons.lock_rounded),
@@ -160,53 +159,6 @@ class _LoginScreenState extends State<LoginScreen> {
                                 validator: (v) => (v == null || v.isEmpty)
                                     ? 'Enter your password'
                                     : null,
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 14),
-                        AppCard(
-                          padding: const EdgeInsets.all(18),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  const IconBadge(
-                                      icon: Icons.notifications_active_rounded,
-                                      color: Pal.accent,
-                                      size: 40),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text('Push notifications',
-                                            style: TextStyle(
-                                                color: p.text,
-                                                fontWeight: FontWeight.w700,
-                                                fontSize: 15)),
-                                        Text('Optional. Alerts on your phone.',
-                                            style: TextStyle(
-                                                color: p.muted, fontSize: 13)),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 14),
-                              TextFormField(
-                                controller: _push,
-                                keyboardType: TextInputType.url,
-                                autocorrect: false,
-                                textInputAction: TextInputAction.done,
-                                onFieldSubmitted: (_) => _submit(),
-                                decoration: const InputDecoration(
-                                  labelText: 'Notification server URL',
-                                  hintText: 'https://push.example.com',
-                                  prefixIcon: Icon(Icons.cell_tower_rounded),
-                                ),
                               ),
                             ],
                           ),
@@ -238,6 +190,18 @@ class _LoginScreenState extends State<LoginScreen> {
                           icon: Icons.login_rounded,
                           busy: _busy,
                           onPressed: _submit,
+                        ),
+                        const SizedBox(height: 10),
+                        TextButton(
+                          onPressed: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                                builder: (_) => const TermsScreen()),
+                          ),
+                          child: Text(
+                            'By signing in you accept the Terms of Use',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: p.muted, fontSize: 13),
+                          ),
                         ),
                       ],
                     ),

@@ -1,25 +1,55 @@
 import 'package:flutter/material.dart';
 
-import '../core/grafana_api.dart';
-import '../core/push_service.dart';
+import '../models/models.dart';
+import '../core/alert_watcher.dart';
+import '../core/system_access.dart';
 import '../state/auth_controller.dart';
+import 'terms_screen.dart';
 import '../theme.dart';
 import '../widgets/ui.dart';
 
 class AccountScreen extends StatefulWidget {
-  const AccountScreen({super.key, required this.auth, required this.push});
+  const AccountScreen({super.key, required this.auth, required this.watcher});
   final AuthController auth;
-  final PushService push;
+  final AlertWatcher watcher;
 
   @override
   State<AccountScreen> createState() => _AccountScreenState();
 }
 
-class _AccountScreenState extends State<AccountScreen> {
-  bool _testing = false;
+class _AccountScreenState extends State<AccountScreen>
+    with WidgetsBindingObserver {
+  SystemStatus _sys = const SystemStatus();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _refreshSystem();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _refreshSystem();
+  }
+
+  /// Re-reads the Android settings. The alarm channel is rebuilt each time so
+  /// a newly granted Do Not Disturb override takes effect.
+  Future<void> _refreshSystem() async {
+    if (!SystemAccess.supported) return;
+    await SystemAccess.setupCriticalChannel();
+    final s = await SystemAccess.status();
+    if (mounted) setState(() => _sys = s);
+  }
 
   AuthController get auth => widget.auth;
-  PushService get push => widget.push;
+  AlertWatcher get watcher => widget.watcher;
 
   void _toast(String text, {bool error = false}) {
     if (!mounted) return;
@@ -35,90 +65,51 @@ class _AccountScreenState extends State<AccountScreen> {
       ));
   }
 
-  Future<String?> _askUrl({String? initial}) {
-    final c = TextEditingController(text: initial ?? '');
-    return showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        icon: const Icon(Icons.cell_tower_rounded, color: Pal.accent),
-        title: const Text('Notification server'),
-        content: TextField(
-          controller: c,
-          autofocus: true,
-          keyboardType: TextInputType.url,
-          autocorrect: false,
-          decoration: const InputDecoration(
-            hintText: 'https://push.example.com',
-            prefixIcon: Icon(Icons.link_rounded),
-          ),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel')),
-          FilledButton(
-            style: FilledButton.styleFrom(minimumSize: const Size(100, 44)),
-            onPressed: () => Navigator.pop(ctx, c.text.trim()),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _enableWith(String url) async {
-    final api = auth.api;
-    if (api == null) return;
-    final problem =
-        GrafanaApi.checkUrl(url, allowInsecure: auth.allowInsecure);
-    if (problem != null) {
-      _toast(problem, error: true);
-      return;
-    }
-    final ok = await push.enable(api, url);
-    if (ok) {
-      await auth.setPush(url, true);
-      _toast('Push notifications are on');
-    } else {
-      await auth.setPush(url, false);
-      _toast(push.message ?? 'Could not enable push', error: true);
-    }
-  }
-
   Future<void> _toggle(bool on) async {
     final api = auth.api;
     if (api == null) return;
     if (on) {
-      var url = auth.backendUrl;
-      if (url == null || url.isEmpty) {
-        url = await _askUrl();
-        if (url == null || url.isEmpty) return;
+      final ok = await watcher.start(api);
+      await auth.setWatch(ok);
+      if (ok) {
+        _toast('Alarms are on. GrafMod is watching your alerts.');
+      } else {
+        _toast(watcher.message ?? 'Could not turn alarms on', error: true);
       }
-      await _enableWith(url);
     } else {
-      await push.disable(api);
-      await auth.setPush(auth.backendUrl, false);
+      watcher.stop();
+      await watcher.shutdownBackground();
+      await auth.setWatch(false);
     }
   }
 
-  Future<void> _editUrl() async {
-    final url = await _askUrl(initial: auth.backendUrl);
-    if (url == null || url.isEmpty) return;
-    await _enableWith(url);
+  Future<void> _testCritical() async {
+    await watcher.sendTestCritical();
+    _toast('Critical test alarm sent');
+  }
+
+  Widget _accessRow(BuildContext context,
+      {required IconData icon,
+      required String title,
+      required String okText,
+      required String fixText,
+      required bool ok,
+      required VoidCallback onFix}) {
+    final p = Pal.of(context);
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(icon, color: ok ? Pal.green : Pal.amber),
+      title: Text(title, style: TextStyle(color: p.text)),
+      subtitle: Text(ok ? okText : fixText, style: TextStyle(color: p.muted)),
+      trailing: ok
+          ? const Icon(Icons.check_circle_rounded, color: Pal.green)
+          : TextButton(onPressed: onFix, child: const Text('Allow')),
+    );
   }
 
   Future<void> _test() async {
-    final api = auth.api;
-    if (api == null) return;
-    setState(() => _testing = true);
-    try {
-      await push.sendTest(api);
-      _toast('Test notification sent');
-    } catch (e) {
-      _toast(e.toString(), error: true);
-    } finally {
-      if (mounted) setState(() => _testing = false);
-    }
+    await watcher.sendTest();
+    _toast('Test alarm sent');
   }
 
   Future<void> _signOut() async {
@@ -127,7 +118,7 @@ class _AccountScreenState extends State<AccountScreen> {
       builder: (c) => AlertDialog(
         icon: const Icon(Icons.logout_rounded, color: Pal.red),
         title: const Text('Sign out?'),
-        content: const Text('Push notifications stop on this device.'),
+        content: const Text('Alarms stop on this device.'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(c, false),
@@ -142,8 +133,8 @@ class _AccountScreenState extends State<AccountScreen> {
       ),
     );
     if (ok != true) return;
-    final api = auth.api;
-    if (api != null) await push.disable(api);
+    watcher.stop();
+    await watcher.shutdownBackground();
     await auth.logout();
   }
 
@@ -179,7 +170,7 @@ class _AccountScreenState extends State<AccountScreen> {
   Widget build(BuildContext context) {
     final p = Pal.of(context);
     return ListenableBuilder(
-      listenable: Listenable.merge([auth, push]),
+      listenable: Listenable.merge([auth, watcher]),
       builder: (context, _) {
         final user = auth.user;
         final display = user == null
@@ -188,16 +179,18 @@ class _AccountScreenState extends State<AccountScreen> {
         final initial =
             display.isEmpty ? '?' : display.substring(0, 1).toUpperCase();
 
-        final working = push.state == PushState.working;
-        final on = push.state == PushState.on;
-        final unavailable = push.state == PushState.unavailable;
+        final working = watcher.state == WatchState.starting;
+        final on = watcher.state == WatchState.on;
+        final blocked = watcher.state == WatchState.blocked;
 
-        final (pillLabel, pillColor, pillIcon) = switch (push.state) {
-          PushState.on => ('Active', Pal.green, Icons.check_circle_rounded),
-          PushState.working => ('Connecting', Pal.amber, Icons.sync_rounded),
-          PushState.unavailable =>
-            ('Unavailable', Pal.red, Icons.block_rounded),
-          PushState.off => ('Off', p.muted, Icons.notifications_off_rounded),
+        final (pillLabel, pillColor, pillIcon) = switch (watcher.state) {
+          WatchState.on => ('Watching', Pal.green, Icons.check_circle_rounded),
+          WatchState.starting =>
+            ('Starting', Pal.amber, Icons.sync_rounded),
+          WatchState.blocked =>
+            ('Blocked', Pal.red, Icons.block_rounded),
+          WatchState.off =>
+            ('Off', p.muted, Icons.notifications_off_rounded),
         };
 
         return ListView(
@@ -260,7 +253,7 @@ class _AccountScreenState extends State<AccountScreen> {
                           size: 40),
                       const SizedBox(width: 14),
                       Expanded(
-                        child: Text('Push notifications',
+                        child: Text('Alert alarms',
                             style: TextStyle(
                                 color: p.text,
                                 fontSize: 16,
@@ -270,16 +263,16 @@ class _AccountScreenState extends State<AccountScreen> {
                           label: pillLabel, color: pillColor, icon: pillIcon),
                     ],
                   ),
-                  if (push.message != null && !on) ...[
+                  if (watcher.message != null) ...[
                     const SizedBox(height: 12),
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Icon(Icons.info_rounded,
-                            size: 18, color: unavailable ? Pal.red : Pal.amber),
+                            size: 18, color: blocked ? Pal.red : Pal.amber),
                         const SizedBox(width: 8),
                         Expanded(
-                          child: Text(push.message!,
+                          child: Text(watcher.message!,
                               style: TextStyle(color: p.muted, height: 1.35)),
                         ),
                       ],
@@ -289,23 +282,32 @@ class _AccountScreenState extends State<AccountScreen> {
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     value: on || working,
-                    onChanged:
-                        (working || unavailable) ? null : (v) => _toggle(v),
-                    title: Text('Receive alerts',
+                    onChanged: working ? null : (v) => _toggle(v),
+                    title: Text('Watch alerts',
                         style: TextStyle(color: p.text)),
+                    subtitle: Text(
+                        watcher.inBackground
+                            ? 'GrafMod checks Grafana every 20 seconds and '
+                                'sounds an alarm when an alert starts firing, '
+                                'even when the app is closed. A small '
+                                'notification stays visible while it runs.'
+                            : 'GrafMod checks Grafana every 20 seconds and '
+                                'sounds an alarm when an alert starts firing. '
+                                'Works while the app is running.',
+                        style: TextStyle(color: p.muted)),
                     secondary: Icon(Icons.campaign_rounded, color: p.muted),
                   ),
-                  Divider(color: p.outline),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.cell_tower_rounded, color: p.muted),
-                    title: Text('Notification server',
-                        style: TextStyle(color: p.text)),
-                    subtitle: Text(auth.backendUrl ?? 'Not set',
-                        style: TextStyle(color: p.muted)),
-                    trailing: Icon(Icons.edit_rounded, color: p.muted),
-                    onTap: unavailable || working ? null : _editUrl,
-                  ),
+                  if (on && watcher.lastCheck != null) ...[
+                    Divider(color: p.outline),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.schedule_rounded, color: p.muted),
+                      title: Text('Last check',
+                          style: TextStyle(color: p.text)),
+                      subtitle: Text(timeAgo(watcher.lastCheck!),
+                          style: TextStyle(color: p.muted)),
+                    ),
+                  ],
                   if (on) ...[
                     const SizedBox(height: 8),
                     OutlinedButton.icon(
@@ -316,20 +318,87 @@ class _AccountScreenState extends State<AccountScreen> {
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(14)),
                       ),
-                      onPressed: _testing ? null : _test,
-                      icon: _testing
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Icon(Icons.send_rounded),
-                      label: const Text('Send test notification'),
+                      onPressed: _test,
+                      icon: const Icon(Icons.send_rounded),
+                      label: const Text('Send test alarm'),
                     ),
                   ],
                 ],
               ),
             ),
             const SizedBox(height: 12),
+            if (SystemAccess.supported) ...[
+              AppCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const IconBadge(
+                            icon: Icons.crisis_alert_rounded,
+                            color: Pal.red,
+                            size: 40),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Text('Critical alarm',
+                              style: TextStyle(
+                                  color: p.text,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                        'Critical alerts ring loudly and keep ringing until '
+                        'you open them, like an alarm clock.',
+                        style: TextStyle(color: p.muted, height: 1.35)),
+                    const SizedBox(height: 6),
+                    _accessRow(context,
+                        icon: Icons.do_not_disturb_off_rounded,
+                        title: 'Ring in Do Not Disturb',
+                        okText: 'Critical alarms can break through',
+                        fixText: 'Allow GrafMod to override Do Not Disturb',
+                        ok: _sys.dndOverride,
+                        onFix: SystemAccess.openDndAccess),
+                    Divider(color: p.outline),
+                    _accessRow(context,
+                        icon: Icons.battery_charging_full_rounded,
+                        title: 'Battery optimisation',
+                        okText: 'Unrestricted, GrafMod can keep watching',
+                        fixText: 'Stop Android from pausing GrafMod',
+                        ok: _sys.batteryUnrestricted,
+                        onFix: SystemAccess.requestIgnoreBattery),
+                    if (!_sys.fullScreen) ...[
+                      Divider(color: p.outline),
+                      _accessRow(context,
+                          icon: Icons.fullscreen_rounded,
+                          title: 'Full-screen alarm',
+                          okText: 'Allowed',
+                          fixText: 'Wake the screen when a critical alert fires',
+                          ok: _sys.fullScreen,
+                          onFix: SystemAccess.openFullScreenSettings),
+                    ],
+                    if (watcher.state == WatchState.on) ...[
+                      const SizedBox(height: 8),
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size.fromHeight(48),
+                          foregroundColor: Pal.red,
+                          side: BorderSide(color: Pal.red.withOpacity(0.5)),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14)),
+                        ),
+                        onPressed: _testCritical,
+                        icon: const Icon(Icons.volume_up_rounded),
+                        label: const Text('Test critical alarm'),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
             AppCard(
               child: ListTile(
                 contentPadding: EdgeInsets.zero,
@@ -346,6 +415,18 @@ class _AccountScreenState extends State<AccountScreen> {
                       'Developed by Murtesa\nReleased under the MIT License.\n\n'
                       'GrafMod is an independent project and is not affiliated '
                       'with or endorsed by Grafana Labs.',
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            AppCard(
+              child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.gavel_rounded, color: p.muted),
+                title: Text('Terms of Use', style: TextStyle(color: p.text)),
+                trailing: Icon(Icons.chevron_right_rounded, color: p.muted),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const TermsScreen()),
                 ),
               ),
             ),
