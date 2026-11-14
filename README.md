@@ -1,0 +1,19 @@
+# GrafMod
+
+An open source mobile app for self-hosted Grafana, built with Flutter for Android and iOS.
+
+Sign in to your own Grafana server, browse your dashboards and watch your alerts from your phone.
+
+## Developer
+
+Developed by **Murtesa**.
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for how GrafMod protects your data and how to report a vulnerability.
+
+## License
+
+Released under the [MIT License](LICENSE).
+
+GrafMod is an independent project and is not affiliated with or endorsed by Grafana Labs. Grafana is a trademark of Grafana Labs.
